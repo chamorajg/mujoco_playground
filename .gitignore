@@ -29,3 +29,6 @@ adhoc/
 !config_example.json
 !hfield.png
 !rocky_texture.png
+
+# Model / Logs / Checkpoints
+checkpoints/
