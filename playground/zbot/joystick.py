@@ -14,7 +14,6 @@ from zbot import zbot_constants as consts
 from mujoco_playground._src import gait, mjx_env
 from mujoco_playground._src.collision import geoms_colliding
 
-
 NUM_JOINTS = 10
 
 
@@ -47,7 +46,7 @@ def default_config() -> config_dict.ConfigDict:
               # Base related rewards.
               lin_vel_z=0.0,
               ang_vel_xy=-0.15,
-              orientation=-1.0,
+              orientation=-2.0,
               base_height=0.0,
               # Energy related rewards.
               torques=-2.5e-5,
@@ -60,23 +59,32 @@ def default_config() -> config_dict.ConfigDict:
               feet_height=0.0,
               feet_phase=1.0,
               # Other rewards.
-              stand_still=0.0,
+              stand_still=-1.0,
               alive=0.0,
-              termination=-1.0,
+              termination=-100.0,
+              collision=-0.1,
+              contact_force=-0.01,
               # Pose related rewards.
               joint_deviation_knee=-0.1,
               joint_deviation_hip=-0.25,
               dof_pos_limits=-1.0,
               pose=-1.0,
           ),
-          tracking_sigma=0.5,
+          tracking_sigma=0.25,
           max_foot_height=0.1,
           base_height_target=0.5,
+          max_contact_force=500.0,
       ),
       push_config=config_dict.create(
           enable=True,
           interval_range=[5.0, 10.0],
           magnitude_range=[0.1, 2.0],
+      ),
+      command_config=config_dict.create(
+          # Uniform distribution for command amplitude.
+          a=[1.0, 0.8, 1.0],
+          # Probability of not zeroing out new command.
+          b=[0.9, 0.25, 0.5],
       ),
       lin_vel_x=[-1.0, 1.0],
       lin_vel_y=[-1.0, 1.0],
@@ -462,6 +470,7 @@ class Joystick(zbot_base.ZbotEnv):
         "alive": self._reward_alive(),
         "termination": self._cost_termination(done),
         "stand_still": self._cost_stand_still(info["command"], data.qpos[7:]),
+        "contact_force": self._cost_contact_force(data),
         # Pose related rewards.
         "joint_deviation_hip": self._cost_joint_deviation_hip(
             data.qpos[7:], info["command"]
@@ -524,6 +533,25 @@ class Joystick(zbot_base.ZbotEnv):
 
   # Other rewards.
 
+  def _cost_contact_force(self, data: mjx.Data) -> jax.Array:
+    l_contact_force = mjx_env.get_sensor_data(
+        self.mj_model, data, "left_foot_force"
+    )
+    r_contact_force = mjx_env.get_sensor_data(
+        self.mj_model, data, "right_foot_force"
+    )
+    cost = jp.clip(
+        jp.abs(l_contact_force[2])
+        - self._config.reward_config.max_contact_force,
+        min=0.0,
+    )
+    cost += jp.clip(
+        jp.abs(r_contact_force[2])
+        - self._config.reward_config.max_contact_force,
+        min=0.0,
+    )
+    return cost
+  
   def _cost_joint_pos_limits(self, qpos: jax.Array) -> jax.Array:
     out_of_limits = -jp.clip(qpos - self._soft_lowers, None, 0.0)
     out_of_limits += jp.clip(qpos - self._soft_uppers, 0.0, None)

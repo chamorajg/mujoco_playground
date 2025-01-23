@@ -165,5 +165,7 @@
     <framexaxis objtype="site" objname="r_foot" name="r_foot_upvector"/>
     <framepos objtype="site" objname="l_foot" name="l_foot_pos"/>
     <framepos objtype="site" objname="r_foot" name="r_foot_pos"/>
+    <force name="left_foot_force" site="l_foot"/>
+    <force name="right_foot_force" site="r_foot"/>
   </sensor>
 </mujoco>

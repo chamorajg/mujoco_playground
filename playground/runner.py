@@ -2,6 +2,7 @@
 
 import argparse
 import functools
+import json
 import logging
 import os
 import pickle
@@ -73,6 +74,9 @@ class ZBotRunner:
         if self.args.checkpointing:
             self.ckpt_path = epath.Path("checkpoints").resolve() / self.env_name
             self.ckpt_path.mkdir(parents=True, exist_ok=True)
+
+            with open(self.ckpt_path / "config.json", "w") as fp:
+                json.dump(self.env_config.to_json(), fp, indent=4)
 
     def setup_training_config(self) -> None:
         """Setup PPO training configuration"""

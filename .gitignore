@@ -32,3 +32,4 @@ adhoc/
 
 # Model / Logs / Checkpoints
 checkpoints/
+*.mp4
