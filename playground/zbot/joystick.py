@@ -8,10 +8,11 @@ import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco.mjx._src import math
+
 from mujoco_playground._src import gait, mjx_env
 from mujoco_playground._src.collision import geoms_colliding
-
-from playground.zbot import base as zbot_base, zbot_constants as consts
+from playground.zbot import base as zbot_base
+from playground.zbot import zbot_constants as consts
 
 NUM_JOINTS = 10
 
@@ -89,7 +90,9 @@ class Joystick(zbot_base.ZbotEnv):
         self,
         task: str = "flat_terrain",
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: Optional[
+            Dict[str, Union[str, int, list[Any]]]
+        ] = None,
     ) -> None:
         super().__init__(
             xml_path=consts.task_to_xml(task).as_posix(),
@@ -106,8 +109,12 @@ class Joystick(zbot_base.ZbotEnv):
         self._lowers, self._uppers = self.mj_model.jnt_range[1:].T
         c = (self._lowers + self._uppers) / 2
         r = self._uppers - self._lowers
-        self._soft_lowers = c - 0.5 * r * self._config.soft_joint_pos_limit_factor
-        self._soft_uppers = c + 0.5 * r * self._config.soft_joint_pos_limit_factor
+        self._soft_lowers = (
+            c - 0.5 * r * self._config.soft_joint_pos_limit_factor
+        )
+        self._soft_uppers = (
+            c + 0.5 * r * self._config.soft_joint_pos_limit_factor
+        )
 
         hip_indices = []
         hip_indices.append(self._mj_model.joint("L_Hip_Roll").qposadr - 7)
@@ -140,16 +147,22 @@ class Joystick(zbot_base.ZbotEnv):
         self._torso_mass = self._mj_model.body_subtreemass[self._torso_body_id]
         self._site_id = self._mj_model.site("imu").id
 
-        self._feet_site_id = np.array([self._mj_model.site(name).id for name in consts.FEET_SITES])
+        self._feet_site_id = np.array(
+            [self._mj_model.site(name).id for name in consts.FEET_SITES]
+        )
         self._floor_geom_id = self._mj_model.geom("floor").id
-        self._feet_geom_id = np.array([self._mj_model.geom(name).id for name in consts.FEET_GEOMS])
+        self._feet_geom_id = np.array(
+            [self._mj_model.geom(name).id for name in consts.FEET_GEOMS]
+        )
 
         foot_linvel_sensor_adr = []
         for site in consts.FEET_SITES:
             sensor_id = self._mj_model.sensor(f"{site}_global_linvel").id
             sensor_adr = self._mj_model.sensor_adr[sensor_id]
             sensor_dim = self._mj_model.sensor_dim[sensor_id]
-            foot_linvel_sensor_adr.append(list(range(sensor_adr, sensor_adr + sensor_dim)))
+            foot_linvel_sensor_adr.append(
+                list(range(sensor_adr, sensor_adr + sensor_dim))
+            )
         self._foot_linvel_sensor_adr = jp.array(foot_linvel_sensor_adr)
 
         qpos_noise_scale = np.zeros(NUM_JOINTS)
@@ -177,11 +190,16 @@ class Joystick(zbot_base.ZbotEnv):
 
         # qpos[7:]=*U(0.5, 1.5)
         rng, key = jax.random.split(rng)
-        qpos = qpos.at[7:].set(qpos[7:] * jax.random.uniform(key, (NUM_JOINTS,), minval=0.5, maxval=1.5))
+        qpos = qpos.at[7:].set(
+            qpos[7:]
+            * jax.random.uniform(key, (NUM_JOINTS,), minval=0.5, maxval=1.5)
+        )
 
         # d(xyzrpy)=U(-0.5, 0.5)
         rng, key = jax.random.split(rng)
-        qvel = qvel.at[0:6].set(jax.random.uniform(key, (6,), minval=-0.5, maxval=0.5))
+        qvel = qvel.at[0:6].set(
+            jax.random.uniform(key, (6,), minval=-0.5, maxval=0.5)
+        )
 
         data = mjx_env.init(self.mjx_model, qpos=qpos, qvel=qvel, ctrl=qpos[7:])
 
@@ -227,13 +245,20 @@ class Joystick(zbot_base.ZbotEnv):
             metrics[f"reward/{k}"] = jp.zeros(())
         metrics["swing_peak"] = jp.zeros(())
 
-        contact = jp.array([geoms_colliding(data, geom_id, self._floor_geom_id) for geom_id in self._feet_geom_id])
+        contact = jp.array(
+            [
+                geoms_colliding(data, geom_id, self._floor_geom_id)
+                for geom_id in self._feet_geom_id
+            ]
+        )
         obs = self._get_obs(data, info, contact)
         reward, done = jp.zeros(2)
         return mjx_env.State(data, obs, reward, done, metrics, info)
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
-        state.info["rng"], push1_rng, push2_rng = jax.random.split(state.info["rng"], 3)
+        state.info["rng"], push1_rng, push2_rng = jax.random.split(
+            state.info["rng"], 3
+        )
         push_theta = jax.random.uniform(push1_rng, maxval=2 * jp.pi)
         push_magnitude = jax.random.uniform(
             push2_rng,
@@ -241,7 +266,12 @@ class Joystick(zbot_base.ZbotEnv):
             maxval=self._config.push_config.magnitude_range[1],
         )
         push = jp.array([jp.cos(push_theta), jp.sin(push_theta)])
-        push *= jp.mod(state.info["push_step"] + 1, state.info["push_interval_steps"]) == 0
+        push *= (
+            jp.mod(
+                state.info["push_step"] + 1, state.info["push_interval_steps"]
+            )
+            == 0
+        )
         push *= self._config.push_config.enable
         qvel = state.data.qvel
         qvel = qvel.at[:2].set(push * push_magnitude + qvel[:2])
@@ -249,10 +279,17 @@ class Joystick(zbot_base.ZbotEnv):
         state = state.replace(data=data)
 
         motor_targets = self._default_pose + action * self._config.action_scale
-        data = mjx_env.step(self.mjx_model, state.data, motor_targets, self.n_substeps)
+        data = mjx_env.step(
+            self.mjx_model, state.data, motor_targets, self.n_substeps
+        )
         state.info["motor_targets"] = motor_targets
 
-        contact = jp.array([geoms_colliding(data, geom_id, self._floor_geom_id) for geom_id in self._feet_geom_id])
+        contact = jp.array(
+            [
+                geoms_colliding(data, geom_id, self._floor_geom_id)
+                for geom_id in self._feet_geom_id
+            ]
+        )
         contact_filt = contact | state.info["last_contact"]
         first_contact = (state.info["feet_air_time"] > 0.0) * contact_filt
         state.info["feet_air_time"] += self.dt
@@ -263,8 +300,19 @@ class Joystick(zbot_base.ZbotEnv):
         obs = self._get_obs(data, state.info, contact)
         done = self._get_termination(data)
 
-        rewards = self._get_reward(data, action, state.info, state.metrics, done, first_contact, contact)
-        rewards = {k: v * self._config.reward_config.scales[k] for k, v in rewards.items()}
+        rewards = self._get_reward(
+            data,
+            action,
+            state.info,
+            state.metrics,
+            done,
+            first_contact,
+            contact,
+        )
+        rewards = {
+            k: v * self._config.reward_config.scales[k]
+            for k, v in rewards.items()
+        }
         reward = jp.clip(sum(rewards.values()) * self.dt, 0.0, 10000.0)
 
         state.info["push"] = push
@@ -298,9 +346,15 @@ class Joystick(zbot_base.ZbotEnv):
 
     def _get_termination(self, data: mjx.Data) -> jax.Array:
         fall_termination = self.get_gravity(data)[-1] < 0.0
-        return fall_termination | jp.isnan(data.qpos).any() | jp.isnan(data.qvel).any()
+        return (
+            fall_termination
+            | jp.isnan(data.qpos).any()
+            | jp.isnan(data.qvel).any()
+        )
 
-    def _get_obs(self, data: mjx.Data, info: dict[str, Any], contact: jax.Array) -> mjx_env.Observation:
+    def _get_obs(
+        self, data: mjx.Data, info: dict[str, Any], contact: jax.Array
+    ) -> mjx_env.Observation:
         gyro = self.get_gyro(data)
         info["rng"], noise_rng = jax.random.split(info["rng"])
         noisy_gyro = (
@@ -404,8 +458,12 @@ class Joystick(zbot_base.ZbotEnv):
         del metrics  # Unused.
         return {
             # Tracking rewards.
-            "tracking_lin_vel": self._reward_tracking_lin_vel(info["command"], self.get_local_linvel(data)),
-            "tracking_ang_vel": self._reward_tracking_ang_vel(info["command"], self.get_gyro(data)),
+            "tracking_lin_vel": self._reward_tracking_lin_vel(
+                info["command"], self.get_local_linvel(data)
+            ),
+            "tracking_ang_vel": self._reward_tracking_ang_vel(
+                info["command"], self.get_gyro(data)
+            ),
             # Base-related rewards.
             "lin_vel_z": self._cost_lin_vel_z(self.get_global_linvel(data)),
             "ang_vel_xy": self._cost_ang_vel_xy(self.get_global_angvel(data)),
@@ -413,13 +471,19 @@ class Joystick(zbot_base.ZbotEnv):
             "base_height": self._cost_base_height(data.qpos[2]),
             # Energy related rewards.
             "torques": self._cost_torques(data.actuator_force),
-            "action_rate": self._cost_action_rate(action, info["last_act"], info["last_last_act"]),
+            "action_rate": self._cost_action_rate(
+                action, info["last_act"], info["last_last_act"]
+            ),
             "energy": self._cost_energy(data.qvel[6:], data.actuator_force),
             # Feet related rewards.
             "feet_slip": self._cost_feet_slip(data, contact, info),
             "feet_clearance": self._cost_feet_clearance(data, info),
-            "feet_height": self._cost_feet_height(info["swing_peak"], first_contact, info),
-            "feet_air_time": self._reward_feet_air_time(info["feet_air_time"], first_contact, info["command"]),
+            "feet_height": self._cost_feet_height(
+                info["swing_peak"], first_contact, info
+            ),
+            "feet_air_time": self._reward_feet_air_time(
+                info["feet_air_time"], first_contact, info["command"]
+            ),
             "feet_phase": self._reward_feet_phase(
                 data,
                 info["phase"],
@@ -429,10 +493,16 @@ class Joystick(zbot_base.ZbotEnv):
             # Other rewards.
             "alive": self._reward_alive(),
             "termination": self._cost_termination(done),
-            "stand_still": self._cost_stand_still(info["command"], data.qpos[7:]),
+            "stand_still": self._cost_stand_still(
+                info["command"], data.qpos[7:]
+            ),
             # Pose related rewards.
-            "joint_deviation_hip": self._cost_joint_deviation_hip(data.qpos[7:], info["command"]),
-            "joint_deviation_knee": self._cost_joint_deviation_knee(data.qpos[7:]),
+            "joint_deviation_hip": self._cost_joint_deviation_hip(
+                data.qpos[7:], info["command"]
+            ),
+            "joint_deviation_knee": self._cost_joint_deviation_knee(
+                data.qpos[7:]
+            ),
             "dof_pos_limits": self._cost_joint_pos_limits(data.qpos[7:]),
             "pose": self._cost_pose(data.qpos[7:]),
         }
@@ -445,7 +515,9 @@ class Joystick(zbot_base.ZbotEnv):
         local_vel: jax.Array,
     ) -> jax.Array:
         lin_vel_error = jp.sum(jp.square(commands[:2] - local_vel[:2]))
-        return jp.exp(-lin_vel_error / self._config.reward_config.tracking_sigma)
+        return jp.exp(
+            -lin_vel_error / self._config.reward_config.tracking_sigma
+        )
 
     def _reward_tracking_ang_vel(
         self,
@@ -453,7 +525,9 @@ class Joystick(zbot_base.ZbotEnv):
         ang_vel: jax.Array,
     ) -> jax.Array:
         ang_vel_error = jp.square(commands[2] - ang_vel[2])
-        return jp.exp(-ang_vel_error / self._config.reward_config.tracking_sigma)
+        return jp.exp(
+            -ang_vel_error / self._config.reward_config.tracking_sigma
+        )
 
     # Base-related rewards.
 
@@ -467,15 +541,21 @@ class Joystick(zbot_base.ZbotEnv):
         return jp.sum(jp.square(torso_zaxis[:2]))
 
     def _cost_base_height(self, base_height: jax.Array) -> jax.Array:
-        return jp.square(base_height - self._config.reward_config.base_height_target)
+        return jp.square(
+            base_height - self._config.reward_config.base_height_target
+        )
 
     def _cost_torques(self, torques: jax.Array) -> jax.Array:
         return jp.sum(jp.abs(torques))
 
-    def _cost_energy(self, qvel: jax.Array, qfrc_actuator: jax.Array) -> jax.Array:
+    def _cost_energy(
+        self, qvel: jax.Array, qfrc_actuator: jax.Array
+    ) -> jax.Array:
         return jp.sum(jp.abs(qvel) * jp.abs(qfrc_actuator))
 
-    def _cost_action_rate(self, act: jax.Array, last_act: jax.Array, last_last_act: jax.Array) -> jax.Array:
+    def _cost_action_rate(
+        self, act: jax.Array, last_act: jax.Array, last_last_act: jax.Array
+    ) -> jax.Array:
         del last_last_act  # Unused.
         c1 = jp.sum(jp.square(act - last_act))
         return c1
@@ -503,26 +583,41 @@ class Joystick(zbot_base.ZbotEnv):
 
     # Pose-related rewards.
 
-    def _cost_joint_deviation_hip(self, qpos: jax.Array, cmd: jax.Array) -> jax.Array:
-        cost = jp.sum(jp.abs(qpos[self._hip_indices] - self._default_pose[self._hip_indices]))
+    def _cost_joint_deviation_hip(
+        self, qpos: jax.Array, cmd: jax.Array
+    ) -> jax.Array:
+        cost = jp.sum(
+            jp.abs(
+                qpos[self._hip_indices] - self._default_pose[self._hip_indices]
+            )
+        )
         cost *= jp.abs(cmd[1]) > 0.1
         return cost
 
     def _cost_joint_deviation_knee(self, qpos: jax.Array) -> jax.Array:
-        return jp.sum(jp.abs(qpos[self._knee_indices] - self._default_pose[self._knee_indices]))
+        return jp.sum(
+            jp.abs(
+                qpos[self._knee_indices]
+                - self._default_pose[self._knee_indices]
+            )
+        )
 
     def _cost_pose(self, qpos: jax.Array) -> jax.Array:
         return jp.sum(jp.square(qpos - self._default_pose) * self._weights)
 
     # Feet related rewards.
 
-    def _cost_feet_slip(self, data: mjx.Data, contact: jax.Array, info: dict[str, Any]) -> jax.Array:
+    def _cost_feet_slip(
+        self, data: mjx.Data, contact: jax.Array, info: dict[str, Any]
+    ) -> jax.Array:
         del info  # Unused.
         body_vel = self.get_global_linvel(data)[:2]
         reward = jp.sum(jp.linalg.norm(body_vel, axis=-1) * contact)
         return reward
 
-    def _cost_feet_clearance(self, data: mjx.Data, info: dict[str, Any]) -> jax.Array:
+    def _cost_feet_clearance(
+        self, data: mjx.Data, info: dict[str, Any]
+    ) -> jax.Array:
         del info  # Unused.
         feet_vel = data.sensordata[self._foot_linvel_sensor_adr]
         vel_xy = feet_vel[..., :2]
@@ -579,8 +674,16 @@ class Joystick(zbot_base.ZbotEnv):
     def sample_command(self, rng: jax.Array) -> jax.Array:
         rng1, rng2, rng3, rng4 = jax.random.split(rng, 4)
 
-        lin_vel_x = jax.random.uniform(rng1, minval=self._config.lin_vel_x[0], maxval=self._config.lin_vel_x[1])
-        lin_vel_y = jax.random.uniform(rng2, minval=self._config.lin_vel_y[0], maxval=self._config.lin_vel_y[1])
+        lin_vel_x = jax.random.uniform(
+            rng1,
+            minval=self._config.lin_vel_x[0],
+            maxval=self._config.lin_vel_x[1],
+        )
+        lin_vel_y = jax.random.uniform(
+            rng2,
+            minval=self._config.lin_vel_y[0],
+            maxval=self._config.lin_vel_y[1],
+        )
         ang_vel_yaw = jax.random.uniform(
             rng3,
             minval=self._config.ang_vel_yaw[0],

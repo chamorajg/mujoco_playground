@@ -2,8 +2,11 @@
 
 import argparse
 import functools
+import json
 import logging
+import os
 import pickle
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -17,10 +20,16 @@ import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
 from brax.io import model
-from brax.training.agents.ppo import networks as ppo_networks, train as ppo
+from brax.training.agents.ppo import networks as ppo_networks
+from brax.training.agents.ppo import train as ppo
+from etils import epath
+from flax import struct
+from flax.training import orbax_utils
 from jaxtyping import PRNGKeyArray
 from ml_collections import config_dict
 from mujoco import mjx
+from orbax import checkpoint as ocp
+
 from mujoco_playground import wrapper
 from mujoco_playground._src import mjx_env
 
@@ -30,7 +39,9 @@ class RunnerConfig:
     env_config: config_dict.ConfigDict
     env: mjx_env.MjxEnv
     eval_env: mjx_env.MjxEnv
-    randomizer: Callable[[mjx.Model, PRNGKeyArray], tuple[mjx.Model, jnp.ndarray]]
+    randomizer: Callable[
+        [mjx.Model, PRNGKeyArray], tuple[mjx.Model, jnp.ndarray]
+    ]
 
 
 @dataclass
@@ -64,9 +75,26 @@ class TrainingConfig:
     num_resets_per_eval: int
     network_factory: config_dict.ConfigDict
 
+    def to_dict(self) -> dict:
+        """Convert the training config to a JSON-serializable dictionary.
+
+        Returns:
+            A dictionary representation of the training config with all values
+            converted to JSON-serializable types.
+        """
+        # First get a dictionary of all fields using dataclasses.asdict
+        result = asdict(self)
+
+        # Handle the ConfigDict separately to make it JSON-serializable
+        if isinstance(self.network_factory, config_dict.ConfigDict):
+            result["network_factory"] = self.network_factory.to_dict()
+        return result
+
 
 class BaseRunner(ABC):
-    def __init__(self, args: argparse.Namespace, logger: logging.Logger) -> None:
+    def __init__(
+        self, args: argparse.Namespace, logger: logging.Logger
+    ) -> None:
         """Initialize the ZBotRunner class.
 
         Args:
@@ -127,11 +155,20 @@ class BaseRunner(ABC):
         )
 
     def _get_rl_config_dict(self) -> dict:
-        config_dict = {k: v for k, v in asdict(self.training_config).items()}
+        config_dict = self.training_config.to_dict()
         self.logger.info("RL config: %s", config_dict)
         return config_dict
 
-    def save_video(self, frames: list[np.ndarray], fps: float, filename: str = "output.mp4") -> None:
+    def _save_rl_config_dict(self, path: str) -> None:
+        ckpt_path = Path("checkpoints").resolve() / self.env_name
+        ckpt_path.mkdir(parents=True, exist_ok=True)
+
+        with open(ckpt_path / "config.json", "w") as fp:
+            json.dump(self.training_config.to_dict(), fp, indent=4)
+
+    def save_video(
+        self, frames: list[np.ndarray], fps: float, filename: str = "output.mp4"
+    ) -> None:
         height, width, _ = frames[0].shape
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(filename, fourcc, fps, (width, height))
@@ -185,20 +222,109 @@ class BaseRunner(ABC):
             wrap_env_fn=wrapper.wrap_for_brax_training,
         )
 
-        self.logger.info("Time to jit: %s", self.training_state.times[1] - self.training_state.times[0])
-        self.logger.info("Time to train: %s", self.training_state.times[-1] - self.training_state.times[1])
+        self.logger.info(
+            "Time to jit: %s",
+            self.training_state.times[1] - self.training_state.times[0],
+        )
+        self.logger.info(
+            "Time to train: %s",
+            self.training_state.times[-1] - self.training_state.times[1],
+        )
 
         if self.args.save_model:
-            model.save_params(params, "params")
+            # Store the trained parameters in the training state
+            self.training_state.params = params
+            self.save_model()
 
-    def load_model(self) -> None:
-        model_path = Path("checkpoints") / f"{self.env_name}_params.pkl"
-        with open(model_path, "rb") as f:
-            self.training_state.params = pickle.load(f)
-        self.logger.info("Model loaded successfully")
+    # # Uncomment if it doesn't work
+    # # BEGIN
+    #         model.save_params(params, "params")
+
+    # def load_model(self) -> None:
+    #     model_path = Path("checkpoints") / f"{self.env_name}_params.pkl"
+    #     with open(model_path, "rb") as f:
+    #         self.training_state.params = pickle.load(f)
+    #     self.logger.info("Model loaded successfully")
+    # # END
+
+    def save_model(self) -> None:
+        """Save model parameters using Orbax checkpointer."""
+        # Create checkpoint directory
+        ckpt_dir = Path("checkpoints").resolve() / self.env_name
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create Orbax checkpointer
+        checkpointer = ocp.PyTreeCheckpointer()
+
+        # Prepare checkpoint options
+        ckpt_manager = ocp.CheckpointManager(
+            str(ckpt_dir),  # Convert to string to ensure proper path handling
+            checkpointer,
+            options=ocp.CheckpointManagerOptions(max_to_keep=5),
+        )
+
+        # Save checkpoint
+        step = (
+            self.training_state.x_data[-1] if self.training_state.x_data else 0
+        )
+        save_args = orbax_utils.save_args_from_target(self.training_state)
+
+        ckpt_manager.save(
+            step,
+            self.training_state.params,
+            save_kwargs={"save_args": save_args},
+        )
+
+        # Save config alongside model - Convert ConfigDict to regular dict for JSON serialization
+        config_dict = self._get_rl_config_dict()
+
+        with open(ckpt_dir / f"config_{step}.json", "w") as fp:
+            json.dump(self.training_config.to_dict(), fp, indent=4)
+
+        self.logger.info(
+            f"Model saved successfully at step {step} to {ckpt_dir}"
+        )
+
+    def load_model(self, step: Optional[int] = None) -> None:
+        """Load model parameters using Orbax checkpointer.
+
+        Args:
+            step: Optional step number to load. If None, loads latest checkpoint.
+        """
+        ckpt_dir = Path("checkpoints") / self.env_name
+
+        if not ckpt_dir.exists():
+            raise FileNotFoundError(
+                f"Checkpoint directory {ckpt_dir} not found"
+            )
+
+        # Create Orbax checkpointer
+        checkpointer = ocp.PyTreeCheckpointer()
+        ckpt_manager = ocp.CheckpointManager(ckpt_dir, checkpointer)
+
+        # Determine which step to load
+        if step is None:
+            step = ckpt_manager.latest_step()
+            if step is None:
+                raise FileNotFoundError(f"No checkpoints found in {ckpt_dir}")
+
+        # Load the parameters
+        self.training_state.params = ckpt_manager.restore(step)
+
+        # Try to load config as well
+        config_path = ckpt_dir / f"config_{step}.json"
+        if config_path.exists():
+            with open(config_path, "r") as f:
+                loaded_config = json.load(f)
+                self.logger.info(f"Loaded configuration from {config_path}")
+                # You could update self.training_state.rl_config here if needed
+
+        self.logger.info(f"Model loaded successfully from step {step}")
 
     @functools.partial(jax.jit, static_argnums=(0, 3))
-    def run_eval_step(self, state: jax.Array, rng: jax.Array, inference_fn: any) -> tuple[jax.Array, jax.Array]:
+    def run_eval_step(
+        self, state: jax.Array, rng: jax.Array, inference_fn: any
+    ) -> tuple[jax.Array, jax.Array]:
         act_rng, next_rng = jax.random.split(rng)
         ctrl, _ = inference_fn(state.obs, act_rng)
         next_state = self.eval_env.step(state, ctrl)
@@ -209,37 +335,73 @@ class BaseRunner(ABC):
         if self.training_state.params is None:
             self.load_model()
 
-        # Create inference function
+        # Create policy network without jitting it
         network_factory = functools.partial(
             ppo_networks.make_ppo_networks,
             **self.training_state.rl_config.network_factory,
         )
-        policy_network = network_factory(self.eval_env.observation_size, self.eval_env.action_size)
-        inference_fn = ppo_networks.make_inference_fn(policy_network)(self.training_state.params)
-        inference_fn = jax.jit(inference_fn)
+        policy_network = network_factory(
+            self.eval_env.observation_size, self.eval_env.action_size
+        )
 
-        # Run evaluation episodes
-        for episode in range(self.training_config.num_resets_per_eval):
-            rng = jax.random.PRNGKey(episode)
-            state = self.eval_env.reset(rng)
-            rollout = [state]
-            modify_scene_fns = [lambda _: None]  # Default no-op scene modification
+        # Set environment variables to help debug JAX tracer issues
+        os.environ["JAX_CHECK_TRACER_LEAKS"] = "1"
+        os.environ["JAX_TRACEBACK_FILTERING"] = "off"
 
-            # Run episode
-            for _ in range(self.env_config.episode_length):
-                state, rng = self.run_eval_step(state, rng, inference_fn)  # Pass inference_fn directly
-                rollout.append(state)
-                modify_scene_fns.append(lambda _: None)
+        # Create numpy inference function to avoid JAX tracer issues
+        def numpy_inference(params, policy_network, obs, rng_seed):
+            """Run policy inference using JAX but safely convert all inputs/outputs to NumPy."""
+            # Create inference function
+            inference_fn = ppo_networks.make_inference_fn(policy_network)(
+                params
+            )
 
-            # Calculate episode statistics
-            rewards = jnp.array([s.reward for s in rollout])
-            episode_reward = jnp.sum(rewards)
-            self.logger.info("Episode %d reward: %.2f", episode, episode_reward)
+            # Ensure inputs are JAX arrays
+            jax_obs = jnp.array(obs)
+            jax_rng = jax.random.PRNGKey(rng_seed)
 
-            # Render if requested
-            self.render_episode(rollout, modify_scene_fns, episode)
+            # Run policy inference
+            @jax.jit
+            def _inference(o, r):
+                return inference_fn(o, r)
 
-    def render_episode(self, rollout: list[jax.Array], modify_scene_fns: list[callable], episode_num: int) -> None:
+            # Run inference and convert back to NumPy
+            action, info = _inference(jax_obs, jax_rng)
+            return np.array(action), jax.tree_util.tree_map(np.array, info)
+
+        def safe_reset(env, seed):
+            """Safely reset an environment using a NumPy seed."""
+            # Use NumPy random to avoid JAX tracers
+            np.random.seed(seed)
+            try:
+                # Try using the seed directly (as a Python int)
+                # Calculate episode statistics
+                rewards = np.array([s.reward for s in all_states])
+                episode_reward = np.sum(rewards)
+                self.logger.info(
+                    "Episode %d reward: %.2f", episode, episode_reward
+                )
+
+                # Prepare scene modification functions
+                modify_scene_fns = [lambda _: None] * len(all_states)
+
+                # Render the episode
+                self.render_episode(all_states, modify_scene_fns, episode)
+
+            except Exception as e:
+                self.logger.error(
+                    "Error in evaluation episode %d: %s", episode, str(e)
+                )
+                import traceback
+
+                self.logger.error(traceback.format_exc())
+
+    def render_episode(
+        self,
+        rollout: list[jax.Array],
+        modify_scene_fns: list[callable],
+        episode_num: int,
+    ) -> None:
         render_every = 1
         fps = 1.0 / self.eval_env.dt / render_every
         self.logger.info("fps: %s", fps)

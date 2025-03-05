@@ -117,7 +117,7 @@
           <body name="3215_BothFlange_4" pos="0.00739966 -0.032 0.0188997" quat="0.5 -0.5 0.5 -0.5">
             <inertial pos="0.0436622 0.00286343 -0.0185366" quat="0.484624 0.501567 0.512165 0.501256" mass="0.143337" diaginertia="0.000148208 0.000127573 4.86473e-05"/>
             <joint name="R_Hip_Pitch" pos="0 0 0" axis="0 0 1" range="-1 1.54" class="joint_class"/>
-            <geom class="visual"type="mesh" rgba="0.95 0.93 0.88 1" mesh="3215_BothFlange_4"/>
+            <geom class="visual" type="mesh" rgba="0.95 0.93 0.88 1" mesh="3215_BothFlange_4"/>
             <body name="3215_BothFlange_6" pos="0.1 -0.01 -0.000259715" quat="1 2.32051e-08 -2.32051e-08 0">
               <inertial pos="0.05 2.88121e-09 -0.0178883" quat="0.500076 0.500076 0.499924 0.499924" mass="0.128213" diaginertia="0.000154544 0.000145407 3.5524e-05"/>
               <joint name="R_Knee_Pitch" pos="0 0 0" axis="0 0 1" range="-1.57 0" class="joint_class"/>
