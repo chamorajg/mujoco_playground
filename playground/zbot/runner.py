@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import os
 
 import colorlogging
 
@@ -11,6 +12,7 @@ from playground.zbot import joystick as zbot_joystick
 from playground.zbot import zbot_constants
 
 logger = logging.getLogger(__name__)
+os.environ["JAX_TRACEBACK_FILTERING"] = "off"
 
 
 class ZBotRunner(BaseRunner):
@@ -82,7 +84,6 @@ def main() -> None:
         runner.load_model()
     else:
         runner.train()
-
     runner.evaluate()
 
 

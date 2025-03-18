@@ -1,6 +1,7 @@
 """Defines a common runner between the different robots."""
 
 import argparse
+import copy
 import functools
 import json
 import logging
@@ -111,6 +112,7 @@ class BaseRunner(ABC):
         self.env_config = runner_config.env_config
         self.env = runner_config.env
         self.eval_env = runner_config.eval_env
+        self.video_eval_env = copy.deepcopy(runner_config.eval_env)
         self.randomizer = runner_config.randomizer
 
         # Initialize training state
@@ -198,6 +200,7 @@ class BaseRunner(ABC):
         plt.close()
 
     def train(self) -> None:
+        """Train the agent and prepare for evaluation."""
         ppo_training_params = dict(self.training_state.rl_config)
         if "network_factory" in self.training_state.rl_config:
             network_factory = functools.partial(
@@ -232,20 +235,60 @@ class BaseRunner(ABC):
         )
 
         if self.args.save_model:
-            # Store the trained parameters in the training state
             self.training_state.params = params
             self.save_model()
 
-    # # Uncomment if it doesn't work
-    # # BEGIN
-    #         model.save_params(params, "params")
+    @functools.partial(jax.jit, static_argnums=(0, 3))
+    def run_eval_step(
+        self, state: jax.Array, rng: jax.Array, inference_fn: any
+    ) -> tuple[jax.Array, jax.Array]:
+        act_rng, next_rng = jax.random.split(rng)
+        ctrl, _ = inference_fn(state.obs, act_rng)
+        next_state = self.eval_env.step(state, ctrl)
+        return next_state, next_rng
 
-    # def load_model(self) -> None:
-    #     model_path = Path("checkpoints") / f"{self.env_name}_params.pkl"
-    #     with open(model_path, "rb") as f:
-    #         self.training_state.params = pickle.load(f)
-    #     self.logger.info("Model loaded successfully")
-    # # END
+    def evaluate(self) -> None:
+        """Evaluates the trained model by running episodes and optionally rendering them."""
+        # Create inference function
+        network_factory = functools.partial(
+            ppo_networks.make_ppo_networks,
+            **self.training_state.rl_config.network_factory,
+        )
+        policy_network = network_factory(
+            self.eval_env.observation_size, self.eval_env.action_size
+        )
+        inference_fn = ppo_networks.make_inference_fn(policy_network)(
+            self.training_state.params
+        )
+        jit_inference_fn = jax.jit(inference_fn)
+        jit_reset = jax.jit(self.video_eval_env.reset)
+        jit_step = jax.jit(self.video_eval_env.step)
+
+        # Run evaluation episodes
+        for episode in range(self.training_config.num_resets_per_eval):
+            rng = jax.random.PRNGKey(episode)
+            state = jit_reset(rng)
+
+            rollout = [state]
+            modify_scene_fns = [
+                lambda _: None
+            ]  # Default no-op scene modification
+
+            # Run episode
+            for _ in range(self.env_config.episode_length):
+                act_rng, rng = jax.random.split(rng)
+                ctrl, _ = jit_inference_fn(state.obs, act_rng)
+                state = jit_step(state, ctrl)
+                rollout.append(state)
+                modify_scene_fns.append(lambda _: None)
+
+            # Calculate episode statistics
+            rewards = jnp.array([s.reward for s in rollout])
+            episode_reward = jnp.sum(rewards)
+            self.logger.info("Episode %d reward: %.2f", episode, episode_reward)
+
+            # Render if requested
+            self.render_episode(rollout, modify_scene_fns, episode)
 
     def save_model(self) -> None:
         """Save model parameters using Orbax checkpointer."""
@@ -267,7 +310,9 @@ class BaseRunner(ABC):
         step = (
             self.training_state.x_data[-1] if self.training_state.x_data else 0
         )
-        save_args = orbax_utils.save_args_from_target(self.training_state)
+        save_args = orbax_utils.save_args_from_target(
+            self.training_state.params
+        )
 
         ckpt_manager.save(
             step,
@@ -291,7 +336,7 @@ class BaseRunner(ABC):
         Args:
             step: Optional step number to load. If None, loads latest checkpoint.
         """
-        ckpt_dir = Path("checkpoints") / self.env_name
+        ckpt_dir = Path("checkpoints").resolve() / self.env_name
 
         if not ckpt_dir.exists():
             raise FileNotFoundError(
@@ -320,81 +365,6 @@ class BaseRunner(ABC):
                 # You could update self.training_state.rl_config here if needed
 
         self.logger.info(f"Model loaded successfully from step {step}")
-
-    @functools.partial(jax.jit, static_argnums=(0, 3))
-    def run_eval_step(
-        self, state: jax.Array, rng: jax.Array, inference_fn: any
-    ) -> tuple[jax.Array, jax.Array]:
-        act_rng, next_rng = jax.random.split(rng)
-        ctrl, _ = inference_fn(state.obs, act_rng)
-        next_state = self.eval_env.step(state, ctrl)
-        return next_state, next_rng
-
-    def evaluate(self) -> None:
-        """Evaluates the trained model by running episodes and optionally rendering them."""
-        if self.training_state.params is None:
-            self.load_model()
-
-        # Create policy network without jitting it
-        network_factory = functools.partial(
-            ppo_networks.make_ppo_networks,
-            **self.training_state.rl_config.network_factory,
-        )
-        policy_network = network_factory(
-            self.eval_env.observation_size, self.eval_env.action_size
-        )
-
-        # Set environment variables to help debug JAX tracer issues
-        os.environ["JAX_CHECK_TRACER_LEAKS"] = "1"
-        os.environ["JAX_TRACEBACK_FILTERING"] = "off"
-
-        # Create numpy inference function to avoid JAX tracer issues
-        def numpy_inference(params, policy_network, obs, rng_seed):
-            """Run policy inference using JAX but safely convert all inputs/outputs to NumPy."""
-            # Create inference function
-            inference_fn = ppo_networks.make_inference_fn(policy_network)(
-                params
-            )
-
-            # Ensure inputs are JAX arrays
-            jax_obs = jnp.array(obs)
-            jax_rng = jax.random.PRNGKey(rng_seed)
-
-            # Run policy inference
-            @jax.jit
-            def _inference(o, r):
-                return inference_fn(o, r)
-
-            # Run inference and convert back to NumPy
-            action, info = _inference(jax_obs, jax_rng)
-            return np.array(action), jax.tree_util.tree_map(np.array, info)
-
-        def safe_reset(env, seed):
-            """Safely reset an environment using a NumPy seed."""
-            # Use NumPy random to avoid JAX tracers
-            np.random.seed(seed)
-            try:
-                # Try using the seed directly (as a Python int)
-                # Calculate episode statistics
-                rewards = np.array([s.reward for s in all_states])
-                episode_reward = np.sum(rewards)
-                self.logger.info(
-                    "Episode %d reward: %.2f", episode, episode_reward
-                )
-
-                # Prepare scene modification functions
-                modify_scene_fns = [lambda _: None] * len(all_states)
-
-                # Render the episode
-                self.render_episode(all_states, modify_scene_fns, episode)
-
-            except Exception as e:
-                self.logger.error(
-                    "Error in evaluation episode %d: %s", episode, str(e)
-                )
-                import traceback
-
-                self.logger.error(traceback.format_exc())
 
     def render_episode(
         self,
