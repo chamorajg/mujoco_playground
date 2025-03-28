@@ -24,7 +24,7 @@ from brax.io import model
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
 from etils import epath
-from flax import struct
+from flax import linen, struct
 from flax.training import orbax_utils
 from jaxtyping import PRNGKeyArray
 from ml_collections import config_dict
@@ -131,7 +131,7 @@ class BaseRunner(ABC):
     def _create_training_config(self) -> TrainingConfig:
         is_debug = self.args.debug
         return TrainingConfig(
-            num_timesteps=5 if is_debug else 150_000_000,
+            num_timesteps=5 if is_debug else 500_000_000,  # 150_000_000,
             num_evals=15,
             reward_scaling=1.0,
             episode_length=1 if is_debug else self.env_config.episode_length,
@@ -142,8 +142,8 @@ class BaseRunner(ABC):
             num_updates_per_batch=1 if is_debug else 4,
             discounting=0.97,
             learning_rate=3e-4,
-            entropy_cost=0.005,
-            num_envs=1 if is_debug else 8192,
+            entropy_cost=0.01,
+            num_envs=1 if is_debug else 32,  # 8192,
             batch_size=2 if is_debug else 256,
             max_grad_norm=1.0,
             clipping_epsilon=0.2,
@@ -205,6 +205,7 @@ class BaseRunner(ABC):
         if "network_factory" in self.training_state.rl_config:
             network_factory = functools.partial(
                 ppo_networks.make_ppo_networks,
+                activation=linen.elu,
                 **self.training_state.rl_config.network_factory,
             )
             del ppo_training_params["network_factory"]

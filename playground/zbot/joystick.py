@@ -9,7 +9,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco.mjx._src import math
 
-from mujoco_playground._src import gait, mjx_env
+from mujoco_playground._src import collision, gait, mjx_env
 from mujoco_playground._src.collision import geoms_colliding
 from playground.zbot import base as zbot_base
 from playground.zbot import zbot_constants as consts
@@ -21,9 +21,9 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         ctrl_dt=0.02,
         sim_dt=0.002,
-        episode_length=1000,
+        episode_length=100,  # 1000,
         action_repeat=1,
-        action_scale=0.5,
+        action_scale=1.0,
         history_len=1,
         soft_joint_pos_limit_factor=0.95,
         noise_config=config_dict.create(
@@ -41,36 +41,36 @@ def default_config() -> config_dict.ConfigDict:
         reward_config=config_dict.create(
             scales=config_dict.create(
                 # Tracking related rewards.
-                tracking_lin_vel=1.0,
-                tracking_ang_vel=0.5,
+                tracking_lin_vel=0.0,  # 1.0,
+                tracking_ang_vel=0.0,  # 0.5,
                 # Base related rewards.
-                lin_vel_z=0.0,
-                ang_vel_xy=-0.15,
+                lin_vel_z=0.0,  # 1.0,
+                ang_vel_xy=0.0,  # -0.15,
                 orientation=-1.0,
-                base_height=0.0,
+                base_height=1.0,
                 # Energy related rewards.
-                torques=-2.5e-5,
-                action_rate=-0.01,
+                torques=0.0,  # -2.5e-5,
+                action_rate=0.0,  # -0.01,
                 energy=0.0,
                 # Feet related rewards.
                 feet_clearance=0.0,
-                feet_air_time=2.0,
-                feet_slip=-0.25,
+                feet_air_time=0.0, # 2.0
+                feet_slip=0.0, # -0.25,
                 feet_height=0.0,
-                feet_phase=1.0,
+                feet_phase=0.0,
                 # Other rewards.
-                stand_still=0.0,
-                alive=0.0,
-                termination=-1.0,
+                stand_still=2.0,
+                alive=1.0,
+                termination=-0.1,
                 # Pose related rewards.
-                joint_deviation_knee=-0.1,
-                joint_deviation_hip=-0.25,
+                joint_deviation_knee=0.0,  # -0.1,
+                joint_deviation_hip=0.0,  # -0.25,
                 dof_pos_limits=-1.0,
                 pose=-1.0,
             ),
             tracking_sigma=0.5,
             max_foot_height=0.1,
-            base_height_target=0.5,
+            base_height_target=0.35,
         ),
         push_config=config_dict.create(
             enable=True,
@@ -154,6 +154,13 @@ class Joystick(zbot_base.ZbotEnv):
         self._feet_geom_id = np.array(
             [self._mj_model.geom(name).id for name in consts.FEET_GEOMS]
         )
+        self._hips_site_id = np.array(
+            [self._mj_model.site(name).id for name in consts.HIP_SITES]
+        )
+        self._left_foot_geom_id = self._mj_model.geom("l_foot1").id
+        self._right_foot_geom_id = self._mj_model.geom("r_foot1").id
+        self._left_hip_geom_id = self._mj_model.geom("l_hip1").id
+        self._right_hip_geom_id = self._mj_model.geom("r_hip1").id
 
         foot_linvel_sensor_adr = []
         for site in consts.FEET_SITES:
@@ -277,7 +284,7 @@ class Joystick(zbot_base.ZbotEnv):
         qvel = qvel.at[:2].set(push * push_magnitude + qvel[:2])
         data = state.data.replace(qvel=qvel)
         state = state.replace(data=data)
-
+        # jax.debug.print("Action : {}", action)
         motor_targets = self._default_pose + action * self._config.action_scale
         data = mjx_env.step(
             self.mjx_model, state.data, motor_targets, self.n_substeps
@@ -300,6 +307,8 @@ class Joystick(zbot_base.ZbotEnv):
         obs = self._get_obs(data, state.info, contact)
         done = self._get_termination(data)
 
+        # jax.debug.print("=======\n Terminated: {}\n =======", done)
+
         rewards = self._get_reward(
             data,
             action,
@@ -313,6 +322,9 @@ class Joystick(zbot_base.ZbotEnv):
             k: v * self._config.reward_config.scales[k]
             for k, v in rewards.items()
         }
+        # jax.debug.print(
+        #     "===============\n Rewards : {}\n ===============\n", rewards
+        # )
         reward = jp.clip(sum(rewards.values()) * self.dt, 0.0, 10000.0)
 
         state.info["push"] = push
@@ -346,8 +358,23 @@ class Joystick(zbot_base.ZbotEnv):
 
     def _get_termination(self, data: mjx.Data) -> jax.Array:
         fall_termination = self.get_gravity(data)[-1] < 0.0
+
+        hips_pos = data.site_xpos[self._hips_site_id]
+        floor_pos = data.site_xpos[self._floor_geom_id]
+        delta = hips_pos[..., -1] - floor_pos[..., -1]
+        hips_contact_termination = (delta < 0.3).any(axis=-1)
+        # jax.debug.print("hips position : {}\n", hips_pos)
+
+        contact_termination = collision.geoms_colliding(
+            data, self._left_foot_geom_id, self._right_foot_geom_id
+        )
+        # contact_termination |= collision.geoms_colliding(
+        #     data, self._left_hip_geom_id, self._right_hip_geom_id
+        # )
         return (
             fall_termination
+            | hips_contact_termination
+            | contact_termination
             | jp.isnan(data.qpos).any()
             | jp.isnan(data.qvel).any()
         )
@@ -541,9 +568,9 @@ class Joystick(zbot_base.ZbotEnv):
         return jp.sum(jp.square(torso_zaxis[:2]))
 
     def _cost_base_height(self, base_height: jax.Array) -> jax.Array:
-        return jp.square(
-            base_height - self._config.reward_config.base_height_target
-        )
+        delta_height = base_height - 0.35
+        sign_delta = jp.sign(delta_height)
+        return sign_delta * jp.square(delta_height)
 
     def _cost_torques(self, torques: jax.Array) -> jax.Array:
         return jp.sum(jp.abs(torques))

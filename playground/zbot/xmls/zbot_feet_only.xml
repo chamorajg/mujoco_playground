@@ -29,10 +29,26 @@
           <geom size="0.049 0.009 0.02" pos="-0.013 0.029 0.02" type="box" contype="1" conaffinity="1"/>
           <site size="0.049 0.009 0.02" pos="-0.013 0.029 0.02" type="box"/>
         </default>
-          <default class="FOOT2">
+        <default class="FOOT2">
           <geom size="0.049 0.009 0.02" pos="-0.013 -0.029 0.02" type="box" contype="1" conaffinity="1"/>
           <site size="0.049 0.009 0.02" pos="-0.013 -0.029 0.02" type="box"/>
         </default>
+        <default class="HIP1">
+          <geom size="0.049 0.009 0.02" pos="-0.013 -0.029 0.02" type="box" contype="1" conaffinity="1"/>
+          <site size="0.049 0.009 0.02" pos="-0.013 -0.029 0.02" type="box"/>
+        </default>
+        <default class="HIP2">
+          <geom size="0.049 0.009 0.02" pos="-0.013 -0.029 0.02" type="box" contype="1" conaffinity="1"/>
+          <site size="0.049 0.009 0.02" pos="-0.013 -0.029 0.02" type="box"/>
+        </default>
+        <!-- <default class="SHOULDER1">
+          <geom size="0.049 0.009 0.02" pos="-0.013 -0.029 0.02" type="box" contype="1" conaffinity="1"/>
+          <site size="0.049 0.009 0.02" pos="-0.013 -0.029 0.02" type="box"/>
+        </default>
+        <default class="SHOULDER2">
+          <geom size="0.049 0.009 0.02" pos="-0.013 -0.029 0.02" type="box" contype="1" conaffinity="1"/>
+          <site size="0.049 0.009 0.02" pos="-0.013 -0.029 0.02" type="box"/>
+        </default> -->
       </default>
     </default>
   </default>
@@ -61,6 +77,7 @@
 
   <worldbody>
     <light name="spotlight" mode="targetbodycom" target="Z-BOT2_MASTER-BODY-SKELETON" pos="3 0 4"/>
+    <site name="floor" pos="0 0 0" size="0.01" rgba="0 1 0 1" group="4"/>
     <body name="Z-BOT2_MASTER-BODY-SKELETON" childclass="zbot" pos="0 0 0.407" euler="0 0 1.57">
       <freejoint/>
       <site name="imu" />
@@ -83,6 +100,8 @@
         <inertial pos="-0.00116062 -0.0043962 0.0353962" quat="0.921476 0.220762 0.207667 0.242942" mass="0.0471324" diaginertia="3.44774e-05 3.0413e-05 1.26353e-05"/>
         <joint name="L_Hip_Roll" pos="0 0 0" axis="0 0 1" range="-0.7 0.7" class="joint_class"/>
         <geom class="visual" type="mesh" rgba="0.95 0.93 0.88 1" mesh="U-HIP-L"/>
+        <geom name="l_hip1" class="HIP1" euler="0 0 0"/>
+        <site name="l_hip" class="HIP1" euler="0 0 0"/>
         <body name="3215_BothFlange" pos="0 0.0186997 0.0564" quat="0.707107 -0.707107 0 0">
           <inertial pos="0.0123316 -0.00899712 -0.0185084" quat="0.145714 0.695819 0.101439 0.695926" mass="0.0682953" diaginertia="2.54323e-05 2.35496e-05 1.92309e-05"/>
           <joint name="L_Hip_Yaw" pos="0 0 0" axis="0 0 1" range="-1.54 0.157" class="joint_class"/>
@@ -110,6 +129,8 @@
         <inertial pos="0.00116062 -0.0043962 0.0353962" quat="0.921476 0.220762 -0.207667 -0.242942" mass="0.0471324" diaginertia="3.44774e-05 3.0413e-05 1.26353e-05"/>
         <joint name="R_Hip_Roll" pos="0 0 0" axis="0 0 1" range="-0.7 0.7" class="joint_class"/>
         <geom class="visual" type="mesh" rgba="0.95 0.93 0.88 1" mesh="U-HIP-R"/>
+        <geom name="r_hip1" class="HIP2" euler="0 0 0"/>
+        <site name="r_hip" class="HIP2" euler="0 0 0"/>
         <body name="3215_BothFlange_2" pos="0 -0.0186997 0.0564" quat="0.707107 -0.707107 0 0">
           <inertial pos="-0.0123316 -0.00898328 0.0178111" quat="0.0705026 0.700607 0.114113 0.700826" mass="0.0682953" diaginertia="2.5341e-05 2.36252e-05 1.92157e-05"/>
           <joint name="R_Hip_Yaw" pos="0 0 0" axis="0 0 -1" range="-1.54 0.157" class="joint_class"/>
@@ -165,5 +186,8 @@
     <framexaxis objtype="site" objname="r_foot" name="r_foot_upvector"/>
     <framepos objtype="site" objname="l_foot" name="l_foot_pos"/>
     <framepos objtype="site" objname="r_foot" name="r_foot_pos"/>
+    <framepos objtype="site" objname="l_hip" name="l_hip_pos"/>
+    <framepos objtype="site" objname="r_hip" name="r_hip_pos"/>
+    <framepos objtype="site" objname="floor" name="floor_pos"/>
   </sensor>
 </mujoco>

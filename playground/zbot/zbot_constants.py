@@ -6,8 +6,12 @@ from etils import epath
 
 ROOT_PATH = pathlib.Path(__file__).parent.resolve()
 
-FEET_ONLY_FLAT_TERRAIN_XML = ROOT_PATH / "xmls" / "scene_mjx_feetonly_flat_terrain.xml"
-FEET_ONLY_ROUGH_TERRAIN_XML = ROOT_PATH / "xmls" / "scene_mjx_feetonly_rough_terrain.xml"
+FEET_ONLY_FLAT_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_feetonly_flat_terrain.xml"
+)
+FEET_ONLY_ROUGH_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_feetonly_rough_terrain.xml"
+)
 
 
 def task_to_xml(task_name: str) -> epath.Path:
@@ -18,7 +22,7 @@ def task_to_xml(task_name: str) -> epath.Path:
 
 
 FEET_SITES = ["l_foot", "r_foot"]
-LEFT_FEET_GEOMS = ["r_foot1"]
+LEFT_FEET_GEOMS = ["l_foot1"]
 RIGHT_FEET_GEOMS = ["r_foot1"]
 
 FEET_GEOMS = LEFT_FEET_GEOMS + RIGHT_FEET_GEOMS
@@ -26,6 +30,13 @@ FEET_GEOMS = LEFT_FEET_GEOMS + RIGHT_FEET_GEOMS
 FEET_POS_SENSOR = [f"{site}_pos" for site in FEET_SITES]
 
 ROOT_BODY = "Z-BOT2_MASTER-BODY-SKELETON"
+
+HIP_SITES = ["l_hip", "r_hip"]
+LEFT_HIP_GEOMS = ["l_hip1"]
+RIGHT_HIP_GEOMS = ["r_hip1"]
+
+HIP_GEOMS = LEFT_HIP_GEOMS + RIGHT_HIP_GEOMS
+HIP_POS_SENSOR = [f"{site}_pos" for site in HIP_SITES]
 
 GRAVITY_SENSOR = "upvector"
 GLOBAL_LINVEL_SENSOR = "global_linvel"
